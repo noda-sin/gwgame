@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>フルーツトレイン大冒険 – 二段ジャンプ</title>
+
+<!-- iOS 全画面表示用 -->
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+<style>
+  /* 画面回転・機種を問わず中央に 16:9 キャンバスをフィットさせる */
+  html,body{
+    margin:0;padding:0;background:#87ceeb;overflow:hidden;
+    touch-action:none;               /* iOS のダブルタップ拡大・慣性スクロールを防止 */
+    -webkit-user-select:none;user-select:none;
+  }
+  #wrapper{
+    position:fixed;inset:0;display:flex;justify-content:center;align-items:center;
+  }
+  canvas{background:#cfe9ff;display:block;}
+  #info{
+    position:fixed;top:12px;left:50%;transform:translateX(-50%);
+    font:min(5vw,26px)/1.2 "Helvetica Neue",sans-serif;
+    color:#fff;text-shadow:2px 2px 4px #000;
+    pointer-events:none;
+  }
+</style>
+</head>
+<body>
+<div id="wrapper">
+  <canvas id="game"></canvas>
+</div>
+<div id="info">0 m | 🍊×0</div>
+
+<script>
+(()=>{
+
+/* ===== 論理サイズ固定 ===== */
+const GAME_W = 800, GAME_H = 450;
+const cvs = document.getElementById('game');
+const ctx = cvs.getContext('2d');
+
+/* 実ピクセル固定、CSS で拡大 */
+cvs.width  = GAME_W;
+cvs.height = GAME_H;
+resize();          // 初回フィット
+window.addEventListener('resize', resize);
+function resize(){
+  const ratio = Math.min(
+    window.innerWidth  / GAME_W,
+    window.innerHeight / GAME_H
+  );
+  cvs.style.width  = GAME_W * ratio + 'px';
+  cvs.style.height = GAME_H * ratio + 'px';
+}
+
+/* ===== ゲーム定数 ===== */
+const GY     = GAME_H * 0.8;     // ground‑Y
+const SPEED  = 4;
+const GRAV   = 0.6;
+const JUMP_V = -14;
+
+/* ===== 列車 ===== */
+const train = { x: GAME_W*0.28, w:80, h:30,
+                y:0, baseY:0, vy:0, jumpLeft:2 };
+train.baseY = GY - train.h;
+train.y     = train.baseY;
+
+/* ===== 状態 ===== */
+let worldX=0, distance=0, fruitCnt=0, spawnT=0;
+const obs=[], particles=[];
+
+/* ===== util ===== */
+const r=(a,b)=>a+Math.random()*(b-a);
+function hit(a,b){
+  return a.x < b.x+b.w && b.x < a.x+a.w &&
+         a.y < b.y+b.h && b.y < a.y+a.h;
+}
+
+/* ===== 障害物生成 ===== */
+function spawn(){
+  const type = Math.random() < .3 ? 'fruit' : 'rock';
+  const w = type==='rock'? r(40,70) : 30;
+  const h = type==='rock'? r(40,60) : 30;
+  const x = worldX + GAME_W + r(120,240);
+  const y = type==='rock' ? GY-h : GY-h-r(50,120);
+  obs.push({x,y,w,h,type});
+}
+
+/* ===== 紙吹雪 ===== */
+function burst(x,y){
+  for(let i=0;i<35;i++){
+    particles.push({
+      x,y,vx:r(-2,2),vy:r(-4,-1),life:60,
+      c:`hsl(${r(0,360)},90%,65%)`
+    });
+  }
+}
+
+/* ===== 入力（ジャンプ：ポインタ＆Space） ===== */
+function jump(){
+  if(train.jumpLeft>0){
+    train.vy = JUMP_V; train.jumpLeft--;
+  }
+}
+['pointerdown','keydown'].forEach(ev=>{
+  window.addEventListener(ev,e=>{
+    if(ev==='keydown' && e.code!=='Space') return;
+    jump(); e.preventDefault();
+  },{passive:false});
+});
+
+/* ===== ゲームオーバー ===== */
+function gameOver(){
+  alert(`ゲームオーバー！　距離 ${(distance/10|0)} m　フルーツ ${fruitCnt}`);
+  worldX=distance=fruitCnt=spawnT=0;
+  obs.length=particles.length=0;
+  train.y=train.baseY; train.vy=0; train.jumpLeft=2;
+}
+
+/* ===== 更新ループ ===== */
+function update(){
+  /* スクロール */
+  worldX += SPEED; distance += SPEED;
+
+  /* 障害物生成 */
+  if(++spawnT>110){ spawnT=0; spawn(); }
+
+  /* 物理 */
+  train.vy += GRAV; train.y += train.vy;
+  if(train.y > train.baseY){
+    train.y = train.baseY; train.vy=0; train.jumpLeft=2;
+  }
+
+  /* 障害物 & 取得判定 */
+  for(let i=obs.length-1;i>=0;i--){
+    const o = obs[i];
+    if(o.x+o.w < worldX-100){ obs.splice(i,1); continue; }
+    const relX = o.x - worldX;
+    const a={x:train.x,y:train.y,w:train.w,h:train.h};
+    const b={x:relX,y:o.y,w:o.w,h:o.h};
+    if(hit(a,b)){
+      if(o.type==='rock') return gameOver();
+      fruitCnt++; burst(b.x+b.w/2,b.y); obs.splice(i,1);
+    }
+  }
+
+  /* 紙吹雪 */
+  particles.forEach(p=>{ p.x+=p.vx; p.y+=p.vy; p.vy+=0.1; p.life--; });
+  while(particles[0] && particles[0].life<=0) particles.shift();
+
+  /* UI */
+  document.getElementById('info').textContent =
+    `${(distance/10|0)} m | 🍊×${fruitCnt}`;
+}
+
+/* ===== 描画 ===== */
+function draw(){
+  ctx.clearRect(0,0,GAME_W,GAME_H);
+
+  /* 地面 */
+  ctx.fillStyle='#228B22';
+  ctx.fillRect(0,GY,GAME_W,GAME_H-GY);
+
+  /* 列車 */
+  ctx.fillStyle='#DC143C';
+  ctx.fillRect(train.x,train.y,train.w,train.h);
+  ctx.fillStyle='#000';
+  ctx.beginPath();
+  ctx.arc(train.x+20,train.y+train.h,10,0,Math.PI*2);
+  ctx.arc(train.x+train.w-20,train.y+train.h,10,0,Math.PI*2);
+  ctx.fill();
+
+  /* 障害物 */
+  obs.forEach(o=>{
+    const x=o.x-worldX;
+    if(o.type==='rock'){
+      ctx.fillStyle='#808080';
+      ctx.fillRect(x,o.y,o.w,o.h);
+    }else{
+      ctx.fillStyle='#FFA500';
+      ctx.beginPath();
+      ctx.arc(x+o.w/2,o.y+o.h/2,o.w/2,0,Math.PI*2);
+      ctx.fill();
+    }
+  });
+
+  /* 紙吹雪 */
+  particles.forEach(p=>{
+    ctx.fillStyle=p.c;
+    ctx.fillRect(p.x,p.y,4,4);
+  });
+}
+
+/* ===== メインループ ===== */
+(function loop(){ update(); draw(); requestAnimationFrame(loop); })();
+
+})();
+</script>
+</body>
+</html>
